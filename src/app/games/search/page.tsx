@@ -8,7 +8,7 @@ type GameItem = {
   id: string;
   title: string;
   platform: "Switch" | "PS5" | "PS4" | "PC" | "Xbox" | "Mobile" | "Other";
-  count: number; // 所持数
+  count: number;
   status: "未プレイ" | "プレイ中" | "クリア" | "積み中" | "中断";
 };
 
@@ -29,54 +29,83 @@ function statusClasses(status: GameItem["status"]) {
   }
 }
 
-export default async function Home() {
+export default async function GameSearchPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
   const supabase = await createSupabaseServerClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();
-
   if (!session) {
     redirect("/login");
   }
 
-  const userId = session.user.id;
-
-  const { data, error } = await supabase
-    .from("library_entries")
-    .select(`count, status, game:game_id ( id, title, platform_id )`)
-    .eq("user_id", userId)
-    .order("updated_at", { ascending: false })
-    .limit(30);
+  const params = await searchParams;
+  const query = (params.q ?? "").trim();
 
   let items: GameItem[] = [];
-  if (!error && data) {
-    items = data
-      .filter((row: any) => row.game)
-      .map((row: any) => ({
-        id: row.game.id as string,
-        title: row.game.title as string,
-        platform: (row.game.platform_id as string) as GameItem["platform"],
-        count: row.count as number,
-        status: row.status as GameItem["status"],
-      }));
+  let error: any = null;
+
+  if (query) {
+    const { data, error: fetchError } = await supabase
+      .from("library_entries")
+      .select(`count, status, game:game_id ( id, title, platform_id )`)
+      .eq("user_id", session.user.id)
+      .ilike("game.title", `%${query}%`)
+      .order("updated_at", { ascending: false })
+      .limit(30);
+
+    if (!fetchError && data) {
+      items = data
+        .filter((row: any) => row.game)
+        .map((row: any) => ({
+          id: row.game.id as string,
+          title: row.game.title as string,
+          platform: (row.game.platform_id as string) as GameItem["platform"],
+          count: row.count as number,
+          status: row.status as GameItem["status"],
+        }));
+    }
+    error = fetchError;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">ゲーム一覧</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Supabaseから取得したデータを表示します。
-          </p>
-        </div>
-        <Link
-          href="/games/search"
-          className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
-        >
-          ゲームを検索
-        </Link>
+      <div className="flex flex-col gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight">ゲームを検索</h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          タイトルで検索してゲームの詳細に進み、所持登録を行えます。
+        </p>
+        <form className="mt-2 flex flex-col gap-3 sm:flex-row" action="/games/search" method="get">
+          <input
+            type="text"
+            name="q"
+            defaultValue={query}
+            placeholder="タイトルで検索 (例: Zelda)"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 sm:max-w-md"
+          />
+          <button
+            type="submit"
+            className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
+          >
+            検索
+          </button>
+        </form>
       </div>
+
+      {error && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950 dark:text-rose-300">
+          データ取得に失敗しました。設定をご確認ください。
+        </div>
+      )}
+
+      {!error && items.length === 0 && (
+        <div className="rounded-lg border border-zinc-200 bg-white p-6 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+          {query ? "該当するゲームが見つかりませんでした。" : "検索してゲームを絞り込んでください。"}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((g) => (
@@ -107,19 +136,8 @@ export default async function Home() {
             </div>
           </Link>
         ))}
-
-        {!error && items.length === 0 && (
-          <div className="col-span-full rounded-md border border-zinc-200 bg-white p-6 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-            表示できるゲームがありません。Supabaseにデータを追加してください。
-          </div>
-        )}
-
-        {error && (
-          <div className="col-span-full rounded-md border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950 dark:text-rose-300">
-            データ取得に失敗しました。設定をご確認ください。
-          </div>
-        )}
       </div>
     </div>
   );
 }
+
